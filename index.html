@@ -707,6 +707,15 @@
       <aside>
         <div class="panel">
           <h2>题库</h2>
+          <div class="field">
+            <label for="librarySelect">当前题库</label>
+            <select id="librarySelect"></select>
+          </div>
+          <div class="row" style="margin-bottom: 10px">
+            <button id="newLibraryBtn" class="soft" type="button">新建题库</button>
+            <button id="renameLibraryBtn" type="button">重命名</button>
+            <button id="deleteLibraryBtn" class="danger" type="button">删除题库</button>
+          </div>
           <div class="stats">
             <div class="stat">
               <strong id="totalCount">0</strong>
@@ -865,12 +874,17 @@
   <script>
     const STORE_KEY = 'cx_practice_question_bank_v1';
     const STATS_KEY = 'cx_practice_stats_v1';
+    const LIBRARIES_KEY = 'cx_practice_libraries_v2';
 
     const els = {
       jsonFile: document.querySelector('#jsonFile'),
       csvFile: document.querySelector('#csvFile'),
       openDataFileBtn: document.querySelector('#openDataFileBtn'),
       saveDataFileBtn: document.querySelector('#saveDataFileBtn'),
+      librarySelect: document.querySelector('#librarySelect'),
+      newLibraryBtn: document.querySelector('#newLibraryBtn'),
+      renameLibraryBtn: document.querySelector('#renameLibraryBtn'),
+      deleteLibraryBtn: document.querySelector('#deleteLibraryBtn'),
       totalCount: document.querySelector('#totalCount'),
       wrongCount: document.querySelector('#wrongCount'),
       doneCount: document.querySelector('#doneCount'),
@@ -928,9 +942,10 @@
       answerBox: document.querySelector('#answerBox'),
     };
 
+    const initialData = loadInitialData();
     const state = {
-      bank: dedupeQuestions(loadJson(STORE_KEY, [])),
-      stats: loadJson(STATS_KEY, {}),
+      libraries: initialData.libraries,
+      activeLibraryId: initialData.activeLibraryId,
       current: null,
       selected: new Set(),
       queue: [],
@@ -944,6 +959,24 @@
       },
     };
 
+    Object.defineProperty(state, 'bank', {
+      get() {
+        return activeLibrary().bank;
+      },
+      set(value) {
+        activeLibrary().bank = dedupeQuestions(value || []);
+      },
+    });
+
+    Object.defineProperty(state, 'stats', {
+      get() {
+        return activeLibrary().stats;
+      },
+      set(value) {
+        activeLibrary().stats = value || {};
+      },
+    });
+
     function loadJson(key, fallback) {
       try {
         const value = JSON.parse(localStorage.getItem(key) || 'null');
@@ -953,28 +986,116 @@
       }
     }
 
-    function save() {
+    function makeLibraryId(name) {
+      let hash = 2166136261;
+      const input = normalizeText(name) || '默认题库';
+      for (let i = 0; i < input.length; i += 1) {
+        hash ^= input.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return `lib_${(hash >>> 0).toString(16).padStart(8, '0')}`;
+    }
+
+    function makeLibrary(name, bank = [], stats = {}) {
+      const libraryName = normalizeText(name) || '默认题库';
+      return {
+        id: makeLibraryId(libraryName),
+        name: libraryName,
+        bank: dedupeQuestions(bank),
+        stats: stats || {},
+      };
+    }
+
+    function loadInitialData() {
+      const saved = loadJson(LIBRARIES_KEY, null);
+      if (saved?.libraries?.length) {
+        const libraries = saved.libraries.map((item) => makeLibrary(
+          item.name || '默认题库',
+          item.bank || [],
+          item.stats || {},
+        ));
+        const activeLibraryId = libraries.some((item) => item.id === saved.activeLibraryId)
+          ? saved.activeLibraryId
+          : libraries[0].id;
+        return { activeLibraryId, libraries };
+      }
+      const oldBank = loadJson(STORE_KEY, []);
+      const oldStats = loadJson(STATS_KEY, {});
+      const oldLibrary = makeLibrary('默认题库', oldBank, oldStats);
+      return {
+        activeLibraryId: oldLibrary.id,
+        libraries: [oldLibrary],
+      };
+    }
+
+    function activeLibrary() {
+      let library = state.libraries.find((item) => item.id === state.activeLibraryId);
+      if (!library) {
+        library = state.libraries[0] || makeLibrary('默认题库');
+        if (!state.libraries.length) state.libraries.push(library);
+        state.activeLibraryId = library.id;
+      }
+      return library;
+    }
+
+    function findOrCreateLibrary(name) {
+      const libraryName = normalizeText(name) || '默认题库';
+      let library = state.libraries.find((item) => item.name === libraryName);
+      if (!library) {
+        library = makeLibrary(libraryName);
+        state.libraries.push(library);
+      }
+      return library;
+    }
+
+    function libraryNameFromQuestion(item) {
+      return normalizeText(item.courseName || item.libraryName || item.source || '默认题库');
+    }
+
+    function persistLibraries() {
+      localStorage.setItem(LIBRARIES_KEY, JSON.stringify(buildDataFilePayload()));
       localStorage.setItem(STORE_KEY, JSON.stringify(state.bank));
       localStorage.setItem(STATS_KEY, JSON.stringify(state.stats));
+    }
+
+    function save() {
+      persistLibraries();
       render();
     }
 
     function buildDataFilePayload() {
       return {
-        version: 1,
+        version: 2,
         savedAt: new Date().toISOString(),
-        bank: state.bank,
-        stats: state.stats,
+        activeLibraryId: state.activeLibraryId,
+        libraries: state.libraries,
       };
     }
 
     function applyDataFilePayload(data) {
-      const bank = Array.isArray(data) ? data : data.bank;
-      const stats = Array.isArray(data) ? {} : (data.stats || {});
-      state.bank = dedupeQuestions(bank || []);
-      state.stats = stats;
-      localStorage.setItem(STORE_KEY, JSON.stringify(state.bank));
-      localStorage.setItem(STATS_KEY, JSON.stringify(state.stats));
+      if (data?.libraries) {
+        state.libraries = data.libraries.map((item) => makeLibrary(
+          item.name || '默认题库',
+          item.bank || [],
+          item.stats || {},
+        ));
+        state.activeLibraryId = data.activeLibraryId || state.libraries[0]?.id;
+      } else {
+        const bank = Array.isArray(data) ? data : data.bank;
+        const stats = Array.isArray(data) ? {} : (data.stats || {});
+        const library = makeLibrary('默认题库', bank || [], stats);
+        state.libraries = [library];
+        state.activeLibraryId = library.id;
+      }
+      if (!state.libraries.length) {
+        const library = makeLibrary('默认题库');
+        state.libraries = [library];
+        state.activeLibraryId = library.id;
+      }
+      if (!state.libraries.some((item) => item.id === state.activeLibraryId)) {
+        state.activeLibraryId = state.libraries[0].id;
+      }
+      persistLibraries();
       render();
     }
 
@@ -1002,6 +1123,7 @@
         : parseOptionsText(item.options);
       const normalized = {
         legacyId: item.legacyId || item.id || '',
+        libraryName: libraryNameFromQuestion(item),
         source: normalizeText(item.source),
         section: normalizeText(item.section),
         number: normalizeText(item.number),
@@ -1037,21 +1159,45 @@
     }
 
     function mergeIntoBank(items) {
-      const map = new Map(dedupeQuestions(state.bank).map((item) => [item.id, item]));
+      const groups = new Map();
+      items.map(normalizeQuestion).filter((item) => item.question).forEach((item) => {
+        const name = item.libraryName || libraryNameFromQuestion(item);
+        if (!groups.has(name)) groups.set(name, []);
+        groups.get(name).push(item);
+      });
+
       let added = 0;
       let updated = 0;
-      items.map(normalizeQuestion).filter((item) => item.question).forEach((item) => {
-        const old = map.get(item.id);
-        if (!old) {
-          map.set(item.id, item);
-          added += 1;
-          return;
-        }
-        map.set(item.id, { ...old, ...item });
-        updated += 1;
+      const touched = [];
+      groups.forEach((questions, name) => {
+        const library = findOrCreateLibrary(name);
+        const map = new Map(dedupeQuestions(library.bank).map((item) => [item.id, item]));
+        questions.forEach((item) => {
+          const old = map.get(item.id);
+          if (!old) {
+            map.set(item.id, item);
+            added += 1;
+            return;
+          }
+          map.set(item.id, { ...old, ...item });
+          updated += 1;
+        });
+        library.bank = Array.from(map.values());
+        touched.push(`${name} ${library.bank.length}题`);
       });
-      state.bank = Array.from(map.values());
-      setStatus(`导入完成：新增 ${added} 题，更新 ${updated} 题。`);
+
+      if (groups.size) {
+        const firstName = groups.keys().next().value;
+        state.activeLibraryId = findOrCreateLibrary(firstName).id;
+      }
+
+      if (!groups.size) {
+        setStatus('没有可导入的题目。');
+        render();
+        return;
+      }
+
+      setStatus(`导入完成：新增 ${added} 题，更新 ${updated} 题。${touched.join('；')}`);
       save();
     }
 
@@ -1867,7 +2013,86 @@
       showAnswer();
     }
 
+    function renderLibraries() {
+      const current = activeLibrary();
+      els.librarySelect.innerHTML = '';
+      state.libraries.forEach((library) => {
+        const option = document.createElement('option');
+        option.value = library.id;
+        option.textContent = `${library.name}（${library.bank.length}题）`;
+        els.librarySelect.appendChild(option);
+      });
+      els.librarySelect.value = current.id;
+      els.deleteLibraryBtn.disabled = state.libraries.length <= 1;
+    }
+
+    function switchLibrary(id) {
+      if (!state.libraries.some((item) => item.id === id)) return;
+      if (state.exam.active) exitExam(false);
+      state.activeLibraryId = id;
+      state.current = null;
+      state.selected = new Set();
+      state.queue = [];
+      els.quiz.classList.add('hidden');
+      els.paperPreview.classList.add('hidden');
+      els.empty.classList.remove('hidden');
+      persistLibraries();
+      render();
+      setStatus(`已切换到题库：${activeLibrary().name}`);
+    }
+
+    function createLibrary() {
+      const name = normalizeText(prompt('请输入新题库名称，例如：软件测试、软件项目管理') || '');
+      if (!name) return;
+      if (state.libraries.some((item) => item.name === name)) {
+        setStatus('这个题库已经存在，已为你切换过去。');
+        switchLibrary(findOrCreateLibrary(name).id);
+        return;
+      }
+      const library = makeLibrary(name);
+      state.libraries.push(library);
+      switchLibrary(library.id);
+      setStatus(`已新建题库：${name}`);
+    }
+
+    function renameLibrary() {
+      const library = activeLibrary();
+      const name = normalizeText(prompt('请输入新的题库名称', library.name) || '');
+      if (!name || name === library.name) return;
+      if (state.libraries.some((item) => item.id !== library.id && item.name === name)) {
+        setStatus('已经有同名题库了，换个名字会更稳。');
+        return;
+      }
+      library.name = name;
+      library.id = makeLibraryId(name);
+      state.activeLibraryId = library.id;
+      library.bank = library.bank.map((item) => ({ ...item, libraryName: name }));
+      save();
+      setStatus(`题库已重命名为：${name}`);
+    }
+
+    function deleteLibrary() {
+      if (state.libraries.length <= 1) {
+        setStatus('至少保留一个题库。');
+        return;
+      }
+      const library = activeLibrary();
+      if (!confirm(`确定删除题库“${library.name}”吗？其中 ${library.bank.length} 道题和练习记录都会删除。`)) return;
+      state.libraries = state.libraries.filter((item) => item.id !== library.id);
+      state.activeLibraryId = state.libraries[0].id;
+      state.current = null;
+      state.selected = new Set();
+      state.queue = [];
+      if (state.exam.active) exitExam(false);
+      save();
+      els.quiz.classList.add('hidden');
+      els.paperPreview.classList.add('hidden');
+      els.empty.classList.remove('hidden');
+      setStatus('题库已删除。');
+    }
+
     function render() {
+      renderLibraries();
       renderStats();
       renderFilters();
       renderList();
@@ -2076,7 +2301,7 @@
       try {
         const text = await readFile(file);
         const data = JSON.parse(text);
-        if (data.bank || data.stats) {
+        if (data.libraries || data.bank || data.stats) {
           applyDataFilePayload(data);
           setStatus(`已导入数据文件：${state.bank.length} 题。`);
         } else {
@@ -2104,19 +2329,22 @@
 
     els.openDataFileBtn.addEventListener('click', openDataFile);
     els.saveDataFileBtn.addEventListener('click', saveDataFile);
+    els.librarySelect.addEventListener('change', () => switchLibrary(els.librarySelect.value));
+    els.newLibraryBtn.addEventListener('click', createLibrary);
+    els.renameLibraryBtn.addEventListener('click', renameLibrary);
+    els.deleteLibraryBtn.addEventListener('click', deleteLibrary);
     els.exportJsonBtn.addEventListener('click', exportJson);
     els.clearBtn.addEventListener('click', () => {
-      if (!confirm('确定清空题库和练习记录吗？')) return;
+      const library = activeLibrary();
+      if (!confirm(`确定清空当前题库“${library.name}”和练习记录吗？其他题库不会受影响。`)) return;
       state.bank = [];
       state.stats = {};
       state.current = null;
       state.dataFileHandle = null;
-      localStorage.removeItem(STORE_KEY);
-      localStorage.removeItem(STATS_KEY);
       els.quiz.classList.add('hidden');
       els.empty.classList.remove('hidden');
-      setStatus('已清空。');
-      render();
+      save();
+      setStatus(`已清空题库：${library.name}`);
     });
     els.randomBtn.addEventListener('click', pickRandom);
     els.generateExamBtn.addEventListener('click', generateExam);
@@ -2166,9 +2394,9 @@
     window.addEventListener('message', receiveSharedQuestionBank);
 
     render();
-    localStorage.setItem(STORE_KEY, JSON.stringify(state.bank));
+    persistLibraries();
     if (state.bank.length) {
-      setStatus(`已从本地加载 ${state.bank.length} 题。`);
+      setStatus(`已从本地加载“${activeLibrary().name}” ${state.bank.length} 题。`);
     }
   </script>
 </body>
