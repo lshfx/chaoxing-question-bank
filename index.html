@@ -1129,16 +1129,23 @@
       const options = Array.isArray(item.options)
         ? item.options
         : parseOptionsText(item.options);
+      const type = normalizeText(item.type) || '题目';
+      const normalizedOptions = /判断/.test(type) && !options.length
+        ? [
+          { key: 'A', text: '对', raw: 'A. 对' },
+          { key: 'B', text: '错', raw: 'B. 错' },
+        ]
+        : options;
       const normalized = {
         legacyId: item.legacyId || item.id || '',
         libraryName: libraryNameFromQuestion(item),
         source: normalizeText(item.source),
         section: normalizeText(item.section),
         number: normalizeText(item.number),
-        type: normalizeText(item.type) || '题目',
+        type,
         score: item.score === '' || item.score == null ? null : Number(item.score),
         question: normalizeText(item.question),
-        options: options.map((option, index) => ({
+        options: normalizedOptions.map((option, index) => ({
           key: normalizeText(option.key || String.fromCharCode(65 + index)).toUpperCase(),
           text: normalizeText(option.text || option.raw || option),
           raw: normalizeText(option.raw || `${option.key || String.fromCharCode(65 + index)}. ${option.text || option}`),
