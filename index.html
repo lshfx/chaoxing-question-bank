@@ -1622,7 +1622,13 @@
       return Boolean(normalizeAnswer(item.correctAnswer) || item.correctAnswer);
     }
 
+    function clampCurrentSelection() {
+      if (!state.current) return;
+      state.selected = new Set(normalizedSelectedKeys(state.current, Array.from(state.selected)));
+    }
+
     function updateOptionSelection() {
+      clampCurrentSelection();
       els.options.querySelectorAll('.option').forEach((button) => {
         button.classList.toggle('selected', state.selected.has(button.dataset.key));
       });
@@ -1655,6 +1661,7 @@
     }
 
     function selectedAnswer() {
+      clampCurrentSelection();
       if (state.selected.size) return answerFromSelection(state.current, Array.from(state.selected));
       return normalizeText(els.textAnswer.value);
     }
@@ -2244,6 +2251,7 @@
     function checkCurrent() {
       if (!state.current) return;
       const item = state.current;
+      clampCurrentSelection();
       saveCurrentAnswer();
       showAnswer();
       const user = normalizeAnswer(selectedAnswer());
@@ -2268,6 +2276,7 @@
     }
 
     function paintOptionResult(item) {
+      clampCurrentSelection();
       const right = normalizeAnswer(item.correctAnswer);
       const accepted = getAcceptedAnswers(item.correctAnswer, item);
       els.options.querySelectorAll('.option').forEach((button) => {
