@@ -123,7 +123,9 @@
     .file-btn,
     select,
     input[type="number"],
-    input[type="search"] {
+    input[type="search"],
+    input[type="text"],
+    input[type="password"] {
       min-height: 36px;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -135,7 +137,9 @@
 
     select,
     input[type="number"],
-    input[type="search"] {
+    input[type="search"],
+    input[type="text"],
+    input[type="password"] {
       width: 100%;
       max-width: 100%;
       min-width: 0;
@@ -750,6 +754,44 @@
         </div>
 
         <div class="panel">
+          <h2>AI 扩展生题</h2>
+          <div class="field">
+            <label for="aiApiBase">接口地址</label>
+            <input id="aiApiBase" type="text" value="https://api.openai.com/v1" placeholder="https://api.openai.com/v1">
+          </div>
+          <div class="field">
+            <label for="aiApiKey">API Key</label>
+            <input id="aiApiKey" type="password" placeholder="只在当前页面使用，不会保存">
+          </div>
+          <div class="field">
+            <label for="aiModel">模型</label>
+            <input id="aiModel" type="text" value="gpt-4o-mini" placeholder="按你的接口填写模型名">
+          </div>
+          <div class="exam-grid">
+            <div class="exam-row">
+              <span>数量</span>
+              <input id="aiCount" type="number" min="1" max="30" value="5">
+              <span class="exam-hint">建议 5-10 题</span>
+            </div>
+            <div class="field">
+              <label for="aiType">题型偏好</label>
+              <select id="aiType">
+                <option value="auto">自动匹配题库比例</option>
+                <option value="单选题">单选题</option>
+                <option value="多选题">多选题</option>
+                <option value="判断题">判断题</option>
+                <option value="填空题">填空题</option>
+                <option value="简答题">简答题</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top: 12px">
+            <button id="aiGenerateBtn" class="primary">分析并生题</button>
+          </div>
+          <div class="status" id="aiStatus">根据当前题库归纳范围，再生成新题。</div>
+        </div>
+
+        <div class="panel">
           <h2>出题设置</h2>
           <div class="field">
             <label for="sourceFilter">来源</label>
@@ -883,6 +925,7 @@
     const STORE_KEY = 'cx_practice_question_bank_v1';
     const STATS_KEY = 'cx_practice_stats_v1';
     const LIBRARIES_KEY = 'cx_practice_libraries_v2';
+    const AI_SETTINGS_KEY = 'cx_practice_ai_settings_v1';
 
     const els = {
       jsonFile: document.querySelector('#jsonFile'),
@@ -900,6 +943,13 @@
       status: document.querySelector('#status'),
       exportJsonBtn: document.querySelector('#exportJsonBtn'),
       clearBtn: document.querySelector('#clearBtn'),
+      aiApiBase: document.querySelector('#aiApiBase'),
+      aiApiKey: document.querySelector('#aiApiKey'),
+      aiModel: document.querySelector('#aiModel'),
+      aiCount: document.querySelector('#aiCount'),
+      aiType: document.querySelector('#aiType'),
+      aiGenerateBtn: document.querySelector('#aiGenerateBtn'),
+      aiStatus: document.querySelector('#aiStatus'),
       sourceFilter: document.querySelector('#sourceFilter'),
       mode: document.querySelector('#mode'),
       typeFilters: document.querySelector('#typeFilters'),
@@ -1216,6 +1266,132 @@
       save();
     }
 
+    function loadAiSettings() {
+      const settings = loadJson(AI_SETTINGS_KEY, {});
+      els.aiApiBase.value = settings.apiBase || els.aiApiBase.value || 'https://api.openai.com/v1';
+      els.aiModel.value = settings.model || els.aiModel.value || 'gpt-4o-mini';
+      els.aiCount.value = settings.count || els.aiCount.value || 5;
+      els.aiType.value = settings.type || els.aiType.value || 'auto';
+    }
+
+    function saveAiSettings() {
+      localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify({
+        apiBase: normalizeText(els.aiApiBase.value) || 'https://api.openai.com/v1',
+        model: normalizeText(els.aiModel.value) || 'gpt-4o-mini',
+        count: Math.max(1, Math.min(30, Math.floor(Number(els.aiCount.value) || 5))),
+        type: els.aiType.value || 'auto',
+      }));
+    }
+
+    function setAiStatus(text) {
+      els.aiStatus.textContent = text;
+    }
+
+    function aiChatUrl(apiBase) {
+      const base = normalizeText(apiBase).replace(/\/+$/, '');
+      return /\/chat\/completions$/.test(base) ? base : `${base}/chat/completions`;
+    }
+
+    function sampleBankForAi() {
+      return state.bank.slice(0, 80).map((item) => ({
+        type: item.type,
+        question: item.question,
+        options: (item.options || []).map((option) => `${option.key}. ${option.text}`),
+        correctAnswer: item.correctAnswer,
+        analysis: item.analysis,
+        source: item.source,
+      }));
+    }
+
+    function typeSummaryForAi() {
+      return getTypes().map((type) => `${type}:${state.bank.filter((item) => item.type === type).length}`).join('，') || '未知';
+    }
+
+    function buildAiPrompt(count, typePreference) {
+      const library = activeLibrary();
+      const typeInstruction = typePreference === 'auto'
+        ? '题型比例尽量贴近样本题库。'
+        : `只生成题型为“${typePreference}”的题目。`;
+      return `当前题库名称：${library.name}\n当前题库题量：${state.bank.length}\n题型分布：${typeSummaryForAi()}\n任务：请先根据样本题归纳课程知识范围、难度和常见考法，然后扩展生成 ${count} 道新题。${typeInstruction}\n要求：\n1. 新题必须围绕样本题体现出的知识点，不要编造与课程无关的内容。\n2. 题干不要与样本题重复，但考点可以相近。\n3. 单选题给 4 个选项，正确答案用 A/B/C/D；多选题正确答案用 ABCD 这类字母组合；判断题正确答案只能是“对”或“错”，并给 A 对、B 错两个选项；填空题给可接受答案；简答题给参考答案和解析。\n4. 只返回 JSON，不要 Markdown，不要代码块。\nJSON 结构：{ "scope": "归纳出的考试范围", "questions": [{ "type": "单选题", "question": "题干", "options": [{"key":"A","text":"选项"}], "correctAnswer": "A", "analysis": "解析" }] }\n样本题：\n${JSON.stringify(sampleBankForAi(), null, 2)}`;
+    }
+
+    function parseAiResponse(text) {
+      const cleaned = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
+      try {
+        return JSON.parse(cleaned);
+      } catch {
+        const start = cleaned.indexOf('{');
+        const end = cleaned.lastIndexOf('}');
+        if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+        throw new Error('AI 返回内容不是有效 JSON');
+      }
+    }
+
+    function normalizeAiGeneratedQuestions(payload) {
+      const library = activeLibrary();
+      const questions = Array.isArray(payload?.questions) ? payload.questions : [];
+      return questions.map((item) => ({
+        libraryName: library.name,
+        source: `AI扩展 - ${library.name}`,
+        section: payload?.scope ? `AI范围：${normalizeText(payload.scope)}` : 'AI扩展',
+        type: normalizeText(item.type) || '单选题',
+        question: normalizeText(item.question),
+        options: Array.isArray(item.options) ? item.options : [],
+        correctAnswer: normalizeText(item.correctAnswer),
+        analysis: normalizeText(item.analysis),
+        capturedAt: new Date().toISOString(),
+      })).filter((item) => item.question && item.correctAnswer);
+    }
+
+    async function generateAiQuestions() {
+      if (!state.bank.length) {
+        setAiStatus('当前题库为空，先导入一些题目再扩展。');
+        return;
+      }
+      const apiKey = normalizeText(els.aiApiKey.value);
+      const model = normalizeText(els.aiModel.value);
+      const apiBase = normalizeText(els.aiApiBase.value);
+      const count = Math.max(1, Math.min(30, Math.floor(Number(els.aiCount.value) || 5)));
+      const typePreference = els.aiType.value || 'auto';
+      if (!apiBase || !model || !apiKey) {
+        setAiStatus('请填写接口地址、模型和 API Key。');
+        return;
+      }
+
+      saveAiSettings();
+      els.aiGenerateBtn.disabled = true;
+      setAiStatus('正在分析题库并生成新题，请稍等...');
+      try {
+        const response = await fetch(aiChatUrl(apiBase), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.7,
+            messages: [
+              { role: 'system', content: '你是严谨的课程题库扩展助手，只输出可解析 JSON。' },
+              { role: 'user', content: buildAiPrompt(count, typePreference) },
+            ],
+          }),
+        });
+        const raw = await response.text();
+        if (!response.ok) throw new Error(`接口返回 ${response.status}：${raw.slice(0, 180)}`);
+        const data = JSON.parse(raw);
+        const content = data.choices?.[0]?.message?.content || data.output_text || '';
+        const payload = parseAiResponse(content);
+        const generated = normalizeAiGeneratedQuestions(payload);
+        if (!generated.length) throw new Error('AI 没有返回可导入的题目');
+        mergeIntoBank(generated);
+        setAiStatus(`已生成并导入 ${generated.length} 题。范围：${normalizeText(payload.scope) || '未提供'}`);
+      } catch (error) {
+        setAiStatus(`AI 生题失败：${error.message}`);
+      } finally {
+        els.aiGenerateBtn.disabled = false;
+      }
+    }
     function receiveSharedQuestionBank(event) {
       const data = event.data;
       if (!data || data.type !== 'cx-question-bank-import') return;
@@ -2114,6 +2290,7 @@
       renderWrongBook();
       els.randomBtn.disabled = state.bank.length === 0;
       els.generateExamBtn.disabled = state.bank.length === 0;
+      els.aiGenerateBtn.disabled = state.bank.length === 0;
       updateExamButtons();
       els.exportJsonBtn.disabled = state.bank.length === 0;
     }
@@ -2349,6 +2526,7 @@
     els.renameLibraryBtn.addEventListener('click', renameLibrary);
     els.deleteLibraryBtn.addEventListener('click', deleteLibrary);
     els.exportJsonBtn.addEventListener('click', exportJson);
+    els.aiGenerateBtn.addEventListener('click', generateAiQuestions);
     els.clearBtn.addEventListener('click', () => {
       const library = activeLibrary();
       if (!confirm(`确定清空当前题库“${library.name}”和练习记录吗？其他题库不会受影响。`)) return;
@@ -2408,6 +2586,7 @@
     els.nextBtn.addEventListener('click', nextQuestion);
     window.addEventListener('message', receiveSharedQuestionBank);
 
+    loadAiSettings();
     render();
     persistLibraries();
     if (state.bank.length) {
