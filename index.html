@@ -1551,7 +1551,7 @@
       state.current = item;
       const paper = currentPaper();
       const saved = state.exam.active ? paper.answers[item.id] : null;
-      state.selected = new Set(saved?.selected || []);
+      state.selected = new Set(normalizedSelectedKeys(item, saved?.selected || []));
       els.empty.classList.add('hidden');
       if (state.viewMode === 'single') els.paperPreview.classList.add('hidden');
       els.quiz.classList.remove('hidden');
@@ -1614,7 +1614,7 @@
     }
 
     function isMultiChoice(item) {
-      return /多选/.test(item.type) || normalizeAnswer(item.correctAnswer).length > 1;
+      return /多选/.test(item?.type || '');
     }
 
     function canAutoCheck(item) {
@@ -1697,7 +1697,7 @@
       if (!state.exam.active || !state.current) return;
       const paper = currentPaper();
       paper.answers[state.current.id] = {
-        selected: Array.from(state.selected),
+        selected: normalizedSelectedKeys(state.current, Array.from(state.selected)),
         text: normalizeText(els.textAnswer.value),
       };
     }
@@ -1733,6 +1733,10 @@
       }
     }
 
+    function normalizedSelectedKeys(item, selected = []) {
+      const keys = Array.from(new Set((selected || []).filter(Boolean)));
+      return isMultiChoice(item) ? keys : keys.slice(-1);
+    }
     function answerFor(item) {
       return currentPaper().answers[item.id] || { selected: [], text: '' };
     }
@@ -1749,7 +1753,8 @@
         const root = Array.from(els.paperPreview.querySelectorAll('.paper-question'))
           .find((node) => node.dataset.questionId === item.id);
         if (!root) return;
-        const selected = Array.from(root.querySelectorAll('.paper-option.selected')).map((button) => button.dataset.key);
+        let selected = Array.from(root.querySelectorAll('.paper-option.selected')).map((button) => button.dataset.key);
+        selected = normalizedSelectedKeys(item, selected);
         const textarea = root.querySelector('textarea');
         paper.answers[item.id] = {
           selected,
@@ -1813,12 +1818,15 @@
       return `
         <div class="paper-question" id="paper-q-${index}" data-question-id="${escapeHtml(item.id)}">
           <div class="paper-question-title">${index + 1}. <span class="badge">${escapeHtml(item.type)} / ${escapeHtml(formatScore(questionScore(item)))}分</span> ${escapeHtml(item.question)}</div>
-          ${item.options.length ? item.options.map((option) => `
-            <button type="button" class="paper-option ${answer.selected.includes(option.key) ? 'selected' : ''}" data-key="${escapeHtml(option.key)}">
+          ${item.options.length ? item.options.map((option) => {
+            const selectedKeys = normalizedSelectedKeys(item, answer.selected);
+            return `
+            <button type="button" class="paper-option ${selectedKeys.includes(option.key) ? 'selected' : ''}" data-key="${escapeHtml(option.key)}">
               <span class="key">${escapeHtml(option.key)}</span>
               <span>${escapeHtml(option.text)}</span>
             </button>
-          `).join('') : `<textarea placeholder="输入你的答案">${escapeHtml(answer.text)}</textarea>`}
+          `;
+          }).join('') : `<textarea placeholder="输入你的答案">${escapeHtml(answer.text)}</textarea>`}
           ${resultText}
           ${answerBox}
         </div>
