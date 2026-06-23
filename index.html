@@ -1555,7 +1555,7 @@
       els.empty.classList.add('hidden');
       if (state.viewMode === 'single') els.paperPreview.classList.add('hidden');
       els.quiz.classList.remove('hidden');
-      els.typeBadge.textContent = `${item.type}${item.examScore || item.score ? ` / ${item.examScore || item.score}分` : ''}`;
+      els.typeBadge.textContent = `${item.type}${item.examScore || item.score ? ` / ${formatScore(questionScore(item))}分` : ''}`;
       els.sourceBadge.textContent = item.source || '未命名来源';
       els.progressBadge.textContent = state.exam.active
         ? `第 ${state.exam.paperIndex + 1} 套 · ${state.exam.index + 1} / ${paper.questions.length}`
@@ -1574,8 +1574,8 @@
         const result = paper.results[item.id];
         if (result) {
           els.result.textContent = result.pending
-            ? `待自评：${result.score} / ${result.fullScore} 分`
-            : `${result.ok ? '正确' : '错误'}：${result.score} / ${result.fullScore} 分`;
+            ? `待自评：${formatScore(result.score)} / ${formatScore(result.fullScore)} 分`
+            : `${result.ok ? '正确' : '错误'}：${formatScore(result.score)} / ${formatScore(result.fullScore)} 分`;
           els.result.className = `result ${result.ok ? 'ok' : 'bad'}`;
         }
       }
@@ -1668,6 +1668,22 @@
       return keys.join('');
     }
 
+    function roundScore(value) {
+      return Number((Number(value) || 0).toFixed(2));
+    }
+
+    function formatScore(value) {
+      const rounded = roundScore(value);
+      return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+    }
+
+    function questionScore(item) {
+      return roundScore(item.examScore || item.score || 1);
+    }
+
+    function paperTotalScore(questions) {
+      return roundScore((questions || []).reduce((sum, item) => sum + questionScore(item), 0));
+    }
     function currentPaper() {
       return state.exam.papers[state.exam.paperIndex] || {
         questions: [],
@@ -1759,7 +1775,7 @@
     function renderPaperPreview() {
       if (!state.exam.active) return;
       const paper = currentPaper();
-      const total = paper.questions.reduce((sum, item) => sum + Number(item.examScore || item.score || 1), 0);
+      const total = paperTotalScore(paper.questions);
       els.paperPreview.innerHTML = `
         <div class="paper-preview">
           <div class="paper-content">
@@ -1770,7 +1786,7 @@
           </div>
           <aside class="paper-card">
             <h3>答题卡</h3>
-            <div class="status">第 ${state.exam.paperIndex + 1} 套 / 共 ${state.exam.papers.length} 套，共 ${paper.questions.length} 题，${total} 分</div>
+            <div class="status">第 ${state.exam.paperIndex + 1} 套 / 共 ${state.exam.papers.length} 套，共 ${paper.questions.length} 题，${formatScore(total)} 分</div>
             ${groupedPaperQuestions().map((group) => `
               <div class="answer-card-section">
                 <strong>${escapeHtml(group.title)}</strong>
@@ -1789,14 +1805,14 @@
       const answer = answerFor(item);
       const result = currentPaper().results[item.id];
       const resultText = result
-        ? `<div class="result ${result.ok ? 'ok' : 'bad'}">${result.pending ? '待自评' : (result.ok ? '正确' : '错误')}：${result.score} / ${result.fullScore} 分</div>`
+        ? `<div class="result ${result.ok ? 'ok' : 'bad'}">${result.pending ? '待自评' : (result.ok ? '正确' : '错误')}：${formatScore(result.score)} / ${formatScore(result.fullScore)} 分</div>`
         : '';
       const answerBox = currentPaper().submitted
         ? `<div class="answer-box show"><p class="answer-line"><strong>正确答案：</strong>${escapeHtml(displayCorrectAnswer(item))}</p>${item.analysis ? `<p class="answer-line"><strong>解析：</strong>${escapeHtml(item.analysis)}</p>` : ''}</div>`
         : '';
       return `
         <div class="paper-question" id="paper-q-${index}" data-question-id="${escapeHtml(item.id)}">
-          <div class="paper-question-title">${index + 1}. <span class="badge">${escapeHtml(item.type)} / ${escapeHtml(item.examScore || item.score || 1)}分</span> ${escapeHtml(item.question)}</div>
+          <div class="paper-question-title">${index + 1}. <span class="badge">${escapeHtml(item.type)} / ${escapeHtml(formatScore(questionScore(item)))}分</span> ${escapeHtml(item.question)}</div>
           ${item.options.length ? item.options.map((option) => `
             <button type="button" class="paper-option ${answer.selected.includes(option.key) ? 'selected' : ''}" data-key="${escapeHtml(option.key)}">
               <span class="key">${escapeHtml(option.key)}</span>
@@ -1849,10 +1865,10 @@
       const card = els.paperPreview.querySelector('.paper-card');
       if (!card) return;
       const paper = currentPaper();
-      const total = paper.questions.reduce((sum, item) => sum + Number(item.examScore || item.score || 1), 0);
+      const total = paperTotalScore(paper.questions);
       card.innerHTML = `
         <h3>答题卡</h3>
-        <div class="status">第 ${state.exam.paperIndex + 1} 套 / 共 ${state.exam.papers.length} 套，共 ${paper.questions.length} 题，${total} 分</div>
+        <div class="status">第 ${state.exam.paperIndex + 1} 套 / 共 ${state.exam.papers.length} 套，共 ${paper.questions.length} 题，${formatScore(total)} 分</div>
         ${groupedPaperQuestions().map((group) => `
           <div class="answer-card-section">
             <strong>${escapeHtml(group.title)}</strong>
@@ -1938,7 +1954,7 @@
 
     function normalizePaperScore(questions, target = 100) {
       if (!questions.length) return questions;
-      const total = questions.reduce((sum, item) => sum + Number(item.examScore || item.score || 1), 0);
+      const total = paperTotalScore(questions);
       const diff = Number((target - total).toFixed(2));
       if (Math.abs(diff) >= 0.01) {
         const last = questions[questions.length - 1];
@@ -2003,8 +2019,8 @@
       els.examSummary.className = 'summary';
       updateExamButtons();
       const actualCount = papers[0].questions.length;
-      const actualScore = papers[0].questions.reduce((sum, item) => sum + Number(item.examScore || item.score || 1), 0);
-      setExamStatus(`已生成 ${papers.length} 套模拟卷，每套 ${actualCount} 题，共 ${actualScore} 分。${rawScore && rawScore !== actualScore ? ` 已按实际题型从 ${rawScore} 分折算到 100 分。` : ''}当前第 1 套。${missing.length ? ` ${missing.join('，')}。` : ''}`);
+      const actualScore = paperTotalScore(papers[0].questions);
+      setExamStatus(`已生成 ${papers.length} 套模拟卷，每套 ${actualCount} 题，共 ${formatScore(actualScore)} 分。${rawScore && rawScore !== actualScore ? ` 已按实际题型从 ${formatScore(rawScore)} 分折算到 100 分。` : ''}当前第 1 套。${missing.length ? ` ${missing.join('，')}。` : ''}`);
       if (state.viewMode === 'paper') {
         renderPaperPreview();
         els.paperPreview.classList.remove('hidden');
@@ -2121,7 +2137,7 @@
       const answer = paper.answers[item.id] || { selected: [], text: '' };
       const userRaw = answer.selected.length ? answerFromSelection(item, answer.selected) : answer.text;
       const user = normalizeAnswer(userRaw);
-      const fullScore = Number(item.examScore || item.score || 1);
+      const fullScore = questionScore(item);
       const subjective = /简答|问答|论述/.test(item.type);
       const accepted = getAcceptedAnswers(item.correctAnswer, item);
       const ok = Boolean(user) && accepted.includes(user);
@@ -2167,8 +2183,8 @@
     function renderExamSummary() {
       const paper = currentPaper();
       const results = Object.values(paper.results);
-      const total = results.reduce((sum, item) => sum + item.fullScore, 0);
-      const score = results.reduce((sum, item) => sum + item.score, 0);
+      const total = roundScore(results.reduce((sum, item) => sum + item.fullScore, 0));
+      const score = roundScore(results.reduce((sum, item) => sum + item.score, 0));
       const pending = results.filter((item) => item.pending).length;
       const wrongItems = paper.questions
         .map((item, index) => ({ item, index, result: paper.results[item.id] }))
@@ -2177,7 +2193,7 @@
       els.examSummary.innerHTML = `
         <div class="summary-head">
           <div>
-            <div class="summary-score">${score} / ${total}</div>
+            <div class="summary-score">${formatScore(score)} / ${formatScore(total)}</div>
             <div>第 ${state.exam.paperIndex + 1} 套 / 共 ${state.exam.papers.length} 套，${paper.questions.length} 题，错 ${wrongItems.length} 题，待自评 ${pending} 题</div>
           </div>
           <button id="reviewWrongBtn" class="soft" ${wrongItems.length ? '' : 'disabled'}>查看错题</button>
@@ -2193,7 +2209,7 @@
           <h3>本次错题</h3>
           ${wrongItems.map(({ item, index, result }) => `
             <button type="button" class="wrong-review-item" data-wrong-index="${index}">
-              <strong>${index + 1}. ${escapeHtml(item.type)} · ${result.score} / ${result.fullScore} 分</strong>
+              <strong>${index + 1}. ${escapeHtml(item.type)} · ${formatScore(result.score)} / ${formatScore(result.fullScore)} 分</strong>
               <span>${escapeHtml(item.question).slice(0, 120)}</span>
               <span>你的答案：${escapeHtml(result.userAnswer || '未作答')}；正确答案：${escapeHtml(result.correctAnswer || '暂无')}</span>
             </button>
