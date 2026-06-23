@@ -1,15 +1,18 @@
 // ==UserScript==
 // @name         超星可见题目本地题库助手
 // @namespace    local.chaoxing.visible-question-bank
-// @version      0.1.4
+// @version      0.1.5
 // @description  采集当前超星页面中已经可见的题目、答案和解析，保存为本地复习题库，支持导出 JSON/Markdown/CSV。
 // @author       Codex
 // @match        *://*.chaoxing.com/exam-ans/exam/test/*
 // @match        *://*.chaoxing.com/exam/test/*
 // @match        *://*.chaoxing.com/mycourse/studentstudy*
 // @match        *://*.chaoxing.com/mooc-ans/knowledge/cards*
+// @match        *://*.chaoxing.com/mooc-ans/mooc2/work/view*
+// @match        *://*.chaoxing.com/mooc-ans/mooc2/work/dowork*
 // @match        file:///*/test1.html
 // @match        file:///*/test2.html
+// @match        file:///*/test3.html
 // @grant        GM_setClipboard
 // @run-at       document-idle
 // ==/UserScript==
