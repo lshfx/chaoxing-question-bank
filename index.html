@@ -1889,8 +1889,9 @@
       const base = currentExamBase();
       getExamConfig().forEach((config) => {
         const available = base.filter((item) => config.pattern.test(item.type)).length;
+        config.available = available;
         config.countInput.max = String(available);
-        config.countInput.title = available ? `当前可用 ${available} 题` : '当前题库没有这种题型';
+        config.countInput.title = available ? `当前可用 ${available} 题` : '当前题库没有这种题型，组卷时会自动跳过';
         config.scoreInput.title = config.countInput.title;
         if (!available) {
           config.countInput.value = '0';
@@ -1902,6 +1903,23 @@
         config.scoreInput.disabled = false;
         if (readNumber(config.countInput) > available) config.countInput.value = String(available);
       });
+    }
+
+    function prepareExamConfigs(base) {
+      const missing = [];
+      const configs = getExamConfig().map((config) => {
+        const available = base.filter((item) => config.pattern.test(item.type)).length;
+        const requested = config.count;
+        const count = available ? Math.min(requested, available) : 0;
+        if (available && requested > available) missing.push(`${config.label} 只有 ${available} 题，已按 ${available} 题组卷`);
+        return { ...config, available, requested, count };
+      }).filter((config) => config.count > 0);
+      const rawScore = configs.reduce((sum, config) => sum + config.count * config.score, 0);
+      const scale = rawScore > 0 ? 100 / rawScore : 1;
+      configs.forEach((config) => {
+        config.examScore = Number((config.score * scale).toFixed(2));
+      });
+      return { configs, missing, rawScore };
     }
 
     function readNumber(input) {
@@ -1918,6 +1936,17 @@
       return copy;
     }
 
+    function normalizePaperScore(questions, target = 100) {
+      if (!questions.length) return questions;
+      const total = questions.reduce((sum, item) => sum + Number(item.examScore || item.score || 1), 0);
+      const diff = Number((target - total).toFixed(2));
+      if (Math.abs(diff) >= 0.01) {
+        const last = questions[questions.length - 1];
+        last.examScore = Number((Number(last.examScore || last.score || 1) + diff).toFixed(2));
+      }
+      return questions;
+    }
+
     function generateExam() {
       if (!state.bank.length) {
         setExamStatus('请先导入题库。');
@@ -1926,9 +1955,8 @@
       syncExamConfigAvailability();
       const base = currentExamBase();
       const setCount = Math.max(1, Math.floor(readNumber(els.examSetCount) || 1));
-      const configs = getExamConfig();
+      const { configs, missing, rawScore } = prepareExamConfigs(base);
       const papers = [];
-      const missing = [];
 
       function buildPaper() {
         const questions = [];
@@ -1938,13 +1966,13 @@
           const pool = base.filter((item) => config.pattern.test(item.type));
           const picked = shuffled(pool).slice(0, config.count).map((item) => ({
             ...item,
-            examScore: config.score || item.score || 1,
+            examScore: config.examScore || config.score || item.score || 1,
           }));
           questions.push(...picked);
         });
 
         return {
-          questions,
+          questions: normalizePaperScore(questions),
           answers: {},
           results: {},
           submitted: false,
@@ -1952,9 +1980,7 @@
       }
 
       configs.forEach((config) => {
-        if (!config.count) return;
         const pool = base.filter((item) => config.pattern.test(item.type));
-        if (pool.length < config.count) missing.push(`${config.label} 缺 ${config.count - pool.length} 题`);
         if (pool.length && pool.length === config.count && setCount > 1) missing.push(`${config.label} 题量刚好等于配置，多套之间会重复`);
       });
 
@@ -1978,7 +2004,7 @@
       updateExamButtons();
       const actualCount = papers[0].questions.length;
       const actualScore = papers[0].questions.reduce((sum, item) => sum + Number(item.examScore || item.score || 1), 0);
-      setExamStatus(`已生成 ${papers.length} 套模拟卷，每套 ${actualCount} 题，共 ${actualScore} 分。当前第 1 套。${missing.length ? ` ${missing.join('，')}。` : ''}`);
+      setExamStatus(`已生成 ${papers.length} 套模拟卷，每套 ${actualCount} 题，共 ${actualScore} 分。${rawScore && rawScore !== actualScore ? ` 已按实际题型从 ${rawScore} 分折算到 100 分。` : ''}当前第 1 套。${missing.length ? ` ${missing.join('，')}。` : ''}`);
       if (state.viewMode === 'paper') {
         renderPaperPreview();
         els.paperPreview.classList.remove('hidden');
