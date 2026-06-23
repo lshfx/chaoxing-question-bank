@@ -1327,12 +1327,17 @@
       }
     }
 
-    function normalizeAiGeneratedQuestions(payload) {
-      const library = activeLibrary();
+    function aiLibraryName(baseName) {
+      const name = normalizeText(baseName) || '默认题库';
+      return name.endsWith(' - AI扩展') ? name : `${name} - AI扩展`;
+    }
+
+    function normalizeAiGeneratedQuestions(payload, baseLibraryName) {
+      const targetLibraryName = aiLibraryName(baseLibraryName);
       const questions = Array.isArray(payload?.questions) ? payload.questions : [];
       return questions.map((item) => ({
-        libraryName: library.name,
-        source: `AI扩展 - ${library.name}`,
+        libraryName: targetLibraryName,
+        source: `AI扩展 - ${normalizeText(baseLibraryName) || '默认题库'}`,
         section: payload?.scope ? `AI范围：${normalizeText(payload.scope)}` : 'AI扩展',
         type: normalizeText(item.type) || '单选题',
         question: normalizeText(item.question),
@@ -1353,6 +1358,7 @@
       const apiBase = normalizeText(els.aiApiBase.value);
       const count = Math.max(1, Math.min(30, Math.floor(Number(els.aiCount.value) || 5)));
       const typePreference = els.aiType.value || 'auto';
+      const baseLibraryName = activeLibrary().name;
       if (!apiBase || !model || !apiKey) {
         setAiStatus('请填写接口地址、模型和 API Key。');
         return;
@@ -1382,10 +1388,10 @@
         const data = JSON.parse(raw);
         const content = data.choices?.[0]?.message?.content || data.output_text || '';
         const payload = parseAiResponse(content);
-        const generated = normalizeAiGeneratedQuestions(payload);
+        const generated = normalizeAiGeneratedQuestions(payload, baseLibraryName);
         if (!generated.length) throw new Error('AI 没有返回可导入的题目');
         mergeIntoBank(generated);
-        setAiStatus(`已生成并导入 ${generated.length} 题。范围：${normalizeText(payload.scope) || '未提供'}`);
+        setAiStatus(`已生成 ${generated.length} 题，已保存到“${aiLibraryName(baseLibraryName)}”。范围：${normalizeText(payload.scope) || '未提供'}`);
       } catch (error) {
         setAiStatus(`AI 生题失败：${error.message}`);
       } finally {
