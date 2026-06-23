@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         超星可见题目本地题库助手
 // @namespace    local.chaoxing.visible-question-bank
-// @version      0.1.5
+// @version      0.1.6
 // @description  采集当前超星页面中已经可见的题目、答案和解析，保存为本地复习题库，支持导出 JSON/Markdown/CSV。
 // @author       Codex
 // @match        *://*.chaoxing.com/exam-ans/exam/test/*
@@ -21,6 +21,7 @@
   'use strict'
 
   const STORE_KEY = 'cx_visible_question_bank_v1'
+  const TARGET_LIBRARY_KEY = 'cx_visible_question_target_library_v1'
   const PANEL_ID = 'cx-qb-panel'
   // 发布到网上后，把这里改成你的练习网站地址，例如：
   // https://your-name.github.io/chaoxing-question-bank/question-bank-practice.html
@@ -125,6 +126,29 @@
     ]
   }
 
+
+  function getTargetLibraryName() {
+    const input = document.querySelector(`#${PANEL_ID} .cx-qb-library-input`)
+    const value = normalizeText(input?.value)
+    const fallback = getPaperTitle()
+    const name = value || localStorage.getItem(TARGET_LIBRARY_KEY) || fallback
+    return normalizeText(name) || '默认题库'
+  }
+
+  function saveTargetLibraryName() {
+    const input = document.querySelector(`#${PANEL_ID} .cx-qb-library-input`)
+    const name = normalizeText(input?.value)
+    if (name) localStorage.setItem(TARGET_LIBRARY_KEY, name)
+    return name
+  }
+
+  function applyTargetLibrary(items, libraryName = getTargetLibraryName()) {
+    const name = normalizeText(libraryName) || '默认题库'
+    return (items || []).map((item) => ({
+      ...item,
+      libraryName: name,
+    }))
+  }
   function parseQuestionNo(questionEl) {
     const h3 = questionEl.querySelector('.mark_name')
     if (!h3) return ''
@@ -455,6 +479,7 @@
         if (item.myAnswer) lines.push(`我的答案：${item.myAnswer}`)
         if (item.correctAnswer) lines.push(`正确答案：${item.correctAnswer}`)
         if (item.analysis) lines.push(`解析：${item.analysis}`)
+        if (item.libraryName) lines.push(`题库：${item.libraryName}`)
         if (item.source) lines.push(`来源：${item.source}`)
         if (item.section) lines.push(`分组：${item.section}`)
         if (item.imageUrls?.length) {
@@ -470,6 +495,7 @@
     const headers = [
       'id',
       'source',
+      'libraryName',
       'section',
       'number',
       'type',
@@ -635,6 +661,23 @@
         background: #f9fafb;
         cursor: pointer;
       }
+      #${PANEL_ID} .cx-qb-field {
+        margin-bottom: 8px;
+      }
+      #${PANEL_ID} .cx-qb-field label {
+        display: block;
+        margin-bottom: 4px;
+        color: #4b5563;
+        font-size: 12px;
+      }
+      #${PANEL_ID} .cx-qb-library-input {
+        width: 100%;
+        min-height: 32px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        padding: 0 8px;
+        color: #111827;
+      }
       #${PANEL_ID} .cx-qb-actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -695,6 +738,10 @@
         <button class="cx-qb-min-btn" title="收起/展开">-</button>
       </div>
       <div class="cx-qb-body">
+        <div class="cx-qb-field">
+          <label>合并到题库</label>
+          <input class="cx-qb-library-input" type="text" placeholder="例如：软件项目管理">
+        </div>
         <div class="cx-qb-actions">
           <button data-action="scan">扫描本页</button>
           <button data-action="save">保存去重</button>
@@ -712,6 +759,12 @@
       </div>
     `
     document.body.appendChild(panel)
+    const libraryInput = panel.querySelector('.cx-qb-library-input')
+    libraryInput.value = localStorage.getItem(TARGET_LIBRARY_KEY) || getPaperTitle()
+    libraryInput.addEventListener('change', () => {
+      const name = saveTargetLibraryName()
+      if (name) setStatus(`之后扫描会合并到题库：${name}`)
+    })
 
     panel.querySelector('.cx-qb-min-btn').addEventListener('click', () => {
       panel.classList.toggle('cx-qb-min')
@@ -727,16 +780,18 @@
   async function handleAction(action) {
     const bank = loadBank()
     if (action === 'scan') {
-      state.lastScan = scanVisibleQuestions()
+      saveTargetLibraryName()
+      state.lastScan = applyTargetLibrary(scanVisibleQuestions())
       renderPreview(state.lastScan)
-      setStatus(`本页扫描到 ${state.lastScan.length} 题。`)
+      setStatus(`本页扫描到 ${state.lastScan.length} 题，将合并到“${getTargetLibraryName()}”。`)
       return
     }
 
     if (action === 'save') {
-      const scanned = state.lastScan.length
+      saveTargetLibraryName()
+      const scanned = applyTargetLibrary(state.lastScan.length
         ? state.lastScan
-        : scanVisibleQuestions()
+        : scanVisibleQuestions())
       const result = mergeQuestions(bank, scanned)
       saveBank(result.items)
       state.lastScan = scanned
@@ -782,9 +837,10 @@
     }
 
     if (action === 'practice') {
-      const scanned = state.lastScan.length
+      saveTargetLibraryName()
+      const scanned = applyTargetLibrary(state.lastScan.length
         ? state.lastScan
-        : scanVisibleQuestions()
+        : scanVisibleQuestions())
       const result = mergeQuestions(bank, scanned)
       saveBank(result.items)
       state.lastScan = scanned
