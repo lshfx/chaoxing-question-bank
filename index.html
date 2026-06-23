@@ -1872,12 +1872,36 @@
 
     function getExamConfig() {
       return [
-        { label: '单选题', pattern: /单选/, count: readNumber(els.examSingleCount), score: readNumber(els.examSingleScore) },
-        { label: '多选题', pattern: /多选/, count: readNumber(els.examMultiCount), score: readNumber(els.examMultiScore) },
-        { label: '判断题', pattern: /判断/, count: readNumber(els.examJudgeCount), score: readNumber(els.examJudgeScore) },
-        { label: '填空题', pattern: /填空/, count: readNumber(els.examFillCount), score: readNumber(els.examFillScore) },
-        { label: '简答题', pattern: /简答|问答|论述/, count: readNumber(els.examShortCount), score: readNumber(els.examShortScore) },
+        { label: '单选题', pattern: /单选/, countInput: els.examSingleCount, scoreInput: els.examSingleScore, count: readNumber(els.examSingleCount), score: readNumber(els.examSingleScore) },
+        { label: '多选题', pattern: /多选/, countInput: els.examMultiCount, scoreInput: els.examMultiScore, count: readNumber(els.examMultiCount), score: readNumber(els.examMultiScore) },
+        { label: '判断题', pattern: /判断/, countInput: els.examJudgeCount, scoreInput: els.examJudgeScore, count: readNumber(els.examJudgeCount), score: readNumber(els.examJudgeScore) },
+        { label: '填空题', pattern: /填空/, countInput: els.examFillCount, scoreInput: els.examFillScore, count: readNumber(els.examFillCount), score: readNumber(els.examFillScore) },
+        { label: '简答题', pattern: /简答|问答|论述/, countInput: els.examShortCount, scoreInput: els.examShortScore, count: readNumber(els.examShortCount), score: readNumber(els.examShortScore) },
       ];
+    }
+
+    function currentExamBase() {
+      const source = els.sourceFilter.value;
+      return state.bank.filter((item) => source === '__all__' || (item.source || '未命名来源') === source);
+    }
+
+    function syncExamConfigAvailability() {
+      const base = currentExamBase();
+      getExamConfig().forEach((config) => {
+        const available = base.filter((item) => config.pattern.test(item.type)).length;
+        config.countInput.max = String(available);
+        config.countInput.title = available ? `当前可用 ${available} 题` : '当前题库没有这种题型';
+        config.scoreInput.title = config.countInput.title;
+        if (!available) {
+          config.countInput.value = '0';
+          config.countInput.disabled = true;
+          config.scoreInput.disabled = true;
+          return;
+        }
+        config.countInput.disabled = false;
+        config.scoreInput.disabled = false;
+        if (readNumber(config.countInput) > available) config.countInput.value = String(available);
+      });
     }
 
     function readNumber(input) {
@@ -1899,14 +1923,12 @@
         setExamStatus('请先导入题库。');
         return;
       }
-      const source = els.sourceFilter.value;
-      const base = state.bank.filter((item) => source === '__all__' || (item.source || '未命名来源') === source);
+      syncExamConfigAvailability();
+      const base = currentExamBase();
       const setCount = Math.max(1, Math.floor(readNumber(els.examSetCount) || 1));
       const configs = getExamConfig();
       const papers = [];
       const missing = [];
-      const plannedCount = configs.reduce((sum, item) => sum + item.count, 0);
-      const plannedScore = configs.reduce((sum, item) => sum + item.count * item.score, 0);
 
       function buildPaper() {
         const questions = [];
@@ -1954,7 +1976,9 @@
       };
       els.examSummary.className = 'summary';
       updateExamButtons();
-      setExamStatus(`已生成 ${papers.length} 套模拟卷，每套计划 ${plannedCount} 题，共 ${plannedScore} 分。当前第 1 套。${missing.length ? ` ${missing.join('，')}。` : ''}`);
+      const actualCount = papers[0].questions.length;
+      const actualScore = papers[0].questions.reduce((sum, item) => sum + Number(item.examScore || item.score || 1), 0);
+      setExamStatus(`已生成 ${papers.length} 套模拟卷，每套 ${actualCount} 题，共 ${actualScore} 分。当前第 1 套。${missing.length ? ` ${missing.join('，')}。` : ''}`);
       if (state.viewMode === 'paper') {
         renderPaperPreview();
         els.paperPreview.classList.remove('hidden');
@@ -2320,6 +2344,7 @@
       renderLibraries();
       renderStats();
       renderFilters();
+      syncExamConfigAvailability();
       renderList();
       renderWrongBook();
       els.randomBtn.disabled = state.bank.length === 0;
@@ -2608,7 +2633,10 @@
       save();
       setStatus('练习记录已重置。');
     });
-    els.sourceFilter.addEventListener('change', renderList);
+    els.sourceFilter.addEventListener('change', () => {
+      syncExamConfigAvailability();
+      renderList();
+    });
     els.mode.addEventListener('change', renderList);
     els.searchInput.addEventListener('input', renderList);
     els.singleModeBtn.addEventListener('click', () => setViewMode('single'));
