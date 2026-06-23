@@ -1186,6 +1186,16 @@
           { key: 'B', text: '错', raw: 'B. 错' },
         ]
         : options;
+      const mappedOptions = normalizedOptions.map((option, index) => ({
+        key: normalizeText(option.key || String.fromCharCode(65 + index)).toUpperCase(),
+        text: normalizeText(option.text || option.raw || option),
+        raw: normalizeText(option.raw || `${option.key || String.fromCharCode(65 + index)}. ${option.text || option}`),
+      })).filter((option) => option.text);
+      let correctAnswer = normalizeText(item.correctAnswer);
+      if (/判断/.test(type) && /^[A-Z]$/i.test(correctAnswer)) {
+        const option = mappedOptions.find((entry) => entry.key === correctAnswer.toUpperCase());
+        if (option?.text) correctAnswer = option.text;
+      }
       const normalized = {
         legacyId: item.legacyId || item.id || '',
         libraryName: libraryNameFromQuestion(item),
@@ -1195,13 +1205,9 @@
         type,
         score: item.score === '' || item.score == null ? null : Number(item.score),
         question: normalizeText(item.question),
-        options: normalizedOptions.map((option, index) => ({
-          key: normalizeText(option.key || String.fromCharCode(65 + index)).toUpperCase(),
-          text: normalizeText(option.text || option.raw || option),
-          raw: normalizeText(option.raw || `${option.key || String.fromCharCode(65 + index)}. ${option.text || option}`),
-        })).filter((option) => option.text),
+        options: mappedOptions,
         myAnswer: normalizeText(item.myAnswer),
-        correctAnswer: normalizeText(item.correctAnswer),
+        correctAnswer,
         analysis: normalizeText(item.analysis),
         pageUrl: normalizeText(item.pageUrl),
         capturedAt: normalizeText(item.capturedAt),
@@ -1312,7 +1318,7 @@
       const typeInstruction = typePreference === 'auto'
         ? '题型比例尽量贴近样本题库。'
         : `只生成题型为“${typePreference}”的题目。`;
-      return `当前题库名称：${library.name}\n当前题库题量：${state.bank.length}\n题型分布：${typeSummaryForAi()}\n任务：请先根据样本题归纳课程知识范围、难度和常见考法，然后扩展生成 ${count} 道新题。${typeInstruction}\n要求：\n1. 新题必须围绕样本题体现出的知识点，不要编造与课程无关的内容。\n2. 题干不要与样本题重复，但考点可以相近。\n3. 单选题给 4 个选项，正确答案用 A/B/C/D；多选题正确答案用 ABCD 这类字母组合；判断题正确答案只能是“对”或“错”，并给 A 对、B 错两个选项；填空题给可接受答案；简答题给参考答案和解析。\n4. 只返回 JSON，不要 Markdown，不要代码块。\nJSON 结构：{ "scope": "归纳出的考试范围", "questions": [{ "type": "单选题", "question": "题干", "options": [{"key":"A","text":"选项"}], "correctAnswer": "A", "analysis": "解析" }] }\n样本题：\n${JSON.stringify(sampleBankForAi(), null, 2)}`;
+      return `当前题库名称：${library.name}\n当前题库题量：${state.bank.length}\n题型分布：${typeSummaryForAi()}\n任务：请先根据样本题归纳课程知识范围、难度和常见考法，然后扩展生成 ${count} 道新题。${typeInstruction}\n要求：\n1. 新题必须围绕样本题体现出的知识点，不要编造与课程无关的内容。\n2. 题干不要与样本题重复，但考点可以相近。\n3. 单选题给 4 个选项，正确答案用 A/B/C/D；多选题正确答案用 ABCD 这类字母组合；判断题必须给 A 对、B 错两个选项，但 correctAnswer 字段必须直接写“对”或“错”，不要写 A/B；填空题给可接受答案；简答题给参考答案和解析。\n4. 只返回 JSON，不要 Markdown，不要代码块。\nJSON 结构：{ "scope": "归纳出的考试范围", "questions": [{ "type": "单选题", "question": "题干", "options": [{"key":"A","text":"选项"}], "correctAnswer": "A", "analysis": "解析" }] }\n样本题：\n${JSON.stringify(sampleBankForAi(), null, 2)}`;
     }
 
     function parseAiResponse(text) {
@@ -1786,7 +1792,7 @@
         ? `<div class="result ${result.ok ? 'ok' : 'bad'}">${result.pending ? '待自评' : (result.ok ? '正确' : '错误')}：${result.score} / ${result.fullScore} 分</div>`
         : '';
       const answerBox = currentPaper().submitted
-        ? `<div class="answer-box show"><p class="answer-line"><strong>正确答案：</strong>${escapeHtml(item.correctAnswer || '暂无')}</p>${item.analysis ? `<p class="answer-line"><strong>解析：</strong>${escapeHtml(item.analysis)}</p>` : ''}</div>`
+        ? `<div class="answer-box show"><p class="answer-line"><strong>正确答案：</strong>${escapeHtml(displayCorrectAnswer(item))}</p>${item.analysis ? `<p class="answer-line"><strong>解析：</strong>${escapeHtml(item.analysis)}</p>` : ''}</div>`
         : '';
       return `
         <div class="paper-question" id="paper-q-${index}" data-question-id="${escapeHtml(item.id)}">
@@ -2029,14 +2035,35 @@
       setExamStatus('已退出模拟卷。');
     }
 
-    function getAcceptedAnswers(answer) {
+    function answerTextForKey(item, key) {
+      const option = item?.options?.find((entry) => entry.key === normalizeText(key).toUpperCase());
+      return normalizeText(option?.text || '');
+    }
+
+    function getAcceptedAnswers(answer, item = null) {
       const text = normalizeText(answer)
         .replace(/\(\d+\)/g, ' ')
         .replace(/（\d+）/g, ' ');
       const parts = text.split(/;|；|可接受:|可接受：|答案[:：]|,|，|\//)
-        .map((item) => normalizeText(item))
+        .map((entry) => normalizeText(entry))
         .filter(Boolean);
-      return Array.from(new Set([text, ...parts].flatMap(answerVariants).filter(Boolean)));
+      const values = [text, ...parts];
+      if (/判断/.test(item?.type || '')) {
+        values.forEach((value) => {
+          const optionText = answerTextForKey(item, value);
+          if (optionText) values.push(optionText);
+        });
+      }
+      return Array.from(new Set(values.flatMap(answerVariants).filter(Boolean)));
+    }
+
+    function displayCorrectAnswer(item) {
+      const answer = normalizeText(item.correctAnswer);
+      if (/判断/.test(item.type || '')) {
+        const optionText = answerTextForKey(item, answer);
+        if (optionText && normalizeAnswer(optionText) !== normalizeAnswer(answer)) return `${answer}（${optionText}）`;
+      }
+      return answer || '暂无';
     }
 
     function gradeQuestion(item) {
@@ -2046,7 +2073,7 @@
       const user = normalizeAnswer(userRaw);
       const fullScore = Number(item.examScore || item.score || 1);
       const subjective = /简答|问答|论述/.test(item.type);
-      const accepted = getAcceptedAnswers(item.correctAnswer);
+      const accepted = getAcceptedAnswers(item.correctAnswer, item);
       const ok = Boolean(user) && accepted.includes(user);
       return {
         id: item.id,
@@ -2146,7 +2173,7 @@
       saveCurrentAnswer();
       showAnswer();
       const user = normalizeAnswer(selectedAnswer());
-      const accepted = getAcceptedAnswers(item.correctAnswer);
+      const accepted = getAcceptedAnswers(item.correctAnswer, item);
       const ok = Boolean(user) && accepted.includes(user);
       if (state.exam.active) {
         els.result.textContent = ok ? '当前题回答正确，提交模拟卷时会计分。' : `当前题回答错误，你的答案：${selectedAnswer() || '未作答'}`;
@@ -2168,12 +2195,13 @@
 
     function paintOptionResult(item) {
       const right = normalizeAnswer(item.correctAnswer);
+      const accepted = getAcceptedAnswers(item.correctAnswer, item);
       els.options.querySelectorAll('.option').forEach((button) => {
         const key = button.dataset.key;
         const option = item.options.find((entry) => entry.key === key);
         const selected = state.selected.has(key);
         const shouldBe = /判断/.test(item.type)
-          ? normalizeAnswer(option?.text || '') === right
+          ? accepted.includes(normalizeAnswer(option?.text || key))
           : right.includes(key);
         button.classList.toggle('correct', shouldBe);
         button.classList.toggle('wrong', selected && !shouldBe);
@@ -2185,7 +2213,7 @@
       const item = state.current;
       els.answerBox.classList.add('show');
       els.answerBox.innerHTML = `
-        <p class="answer-line"><strong>正确答案：</strong>${escapeHtml(item.correctAnswer || '暂无')}</p>
+        <p class="answer-line"><strong>正确答案：</strong>${escapeHtml(displayCorrectAnswer(item))}</p>
         ${item.myAnswer ? `<p class="answer-line"><strong>原我的答案：</strong>${escapeHtml(item.myAnswer)}</p>` : ''}
         ${item.analysis ? `<p class="answer-line"><strong>解析：</strong>${escapeHtml(item.analysis)}</p>` : ''}
         ${item.section ? `<p class="answer-line"><strong>分组：</strong>${escapeHtml(item.section)}</p>` : ''}
