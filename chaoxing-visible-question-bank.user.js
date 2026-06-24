@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         超星可见题目本地题库助手
 // @namespace    local.chaoxing.visible-question-bank
-// @version      0.1.7
+// @version      0.1.8
 // @description  采集当前超星页面中已经可见的题目、答案和解析，保存为本地复习题库，支持导出 JSON/Markdown/CSV。
 // @author       Codex
 // @match        *://*.chaoxing.com/exam-ans/exam/test/*
@@ -333,6 +333,54 @@
     return ''
   }
 
+  function cleanAnswerText(text) {
+    return normalizeText(text)
+      .replace(/^(?:第[一二三四五六七八九十\d]+空[：:]?\s*)/, '')
+      .replace(/^(?:正确答案|参考答案|我的答案|学生答案)[：:]?\s*/, '')
+      .trim()
+  }
+
+  function extractAnswerRows(container, rowSelector) {
+    if (!container) return []
+    return Array.from(container.querySelectorAll(rowSelector))
+      .filter(isVisible)
+      .map((row) => {
+        const paragraphValues = Array.from(row.querySelectorAll('p'))
+          .filter(isVisible)
+          .map(textOf)
+          .map(cleanAnswerText)
+          .filter(Boolean)
+        if (paragraphValues.length) return paragraphValues.join(' ')
+        return cleanAnswerText(textOf(row))
+      })
+      .filter(Boolean)
+  }
+
+  function formatAnswerRows(rows) {
+    const values = rows.filter(Boolean)
+    if (values.length <= 1) return values[0] || ''
+    return values.map((value, index) => `(${index + 1}) ${value}`).join(';')
+  }
+
+  function extractLegacyCorrectAnswer(questionEl) {
+    const container = questionEl.querySelector('.correctAnswerBx')
+    const rows = extractAnswerRows(
+      container,
+      '.correctAnswer.marTop16, .correctAnswer:not(:first-child)',
+    )
+    return formatAnswerRows(rows)
+  }
+
+  function extractLegacyStudentAnswer(questionEl) {
+    const container =
+      questionEl.querySelector('.myAllAnswerBx') ||
+      questionEl.querySelector('.newAnswerBx')
+    const rows = extractAnswerRows(
+      container,
+      '.myAnswer.marTop16, .myAnswerBx .myAnswer:not(.answerFont)',
+    )
+    return formatAnswerRows(rows)
+  }
   function parseLegacyWorkQuestion(questionEl, rootDoc = questionEl.ownerDocument || document) {
     const titleEl =
       questionEl.querySelector('.Zy_TItle') ||
@@ -350,16 +398,16 @@
     )
     const options = parseLegacyWorkOptions(questionEl)
     const correctAnswer =
-      textOf(questionEl.querySelector('.rightAnswerContent')) ||
-      textOf(questionEl.querySelector('.Py_answer')) ||
-      textOf(questionEl.querySelector('.rightAnswer')) ||
-      textOf(questionEl.querySelector('.correctAnswer')) ||
-      extractLabelText(questionEl, ['正确答案', '参考答案'])
+      extractLegacyCorrectAnswer(questionEl) ||
+      cleanAnswerText(textOf(questionEl.querySelector('.rightAnswerContent'))) ||
+      cleanAnswerText(textOf(questionEl.querySelector('.Py_answer'))) ||
+      cleanAnswerText(textOf(questionEl.querySelector('.rightAnswer'))) ||
+      cleanAnswerText(extractLabelText(questionEl, ['正确答案', '参考答案']))
     const myAnswer =
-      textOf(questionEl.querySelector('.stuAnswerContent')) ||
-      textOf(questionEl.querySelector('.myAnswer')) ||
-      textOf(questionEl.querySelector('.stuAnswer')) ||
-      extractLabelText(questionEl, ['我的答案', '学生答案'])
+      extractLegacyStudentAnswer(questionEl) ||
+      cleanAnswerText(textOf(questionEl.querySelector('.stuAnswerContent'))) ||
+      cleanAnswerText(textOf(questionEl.querySelector('.stuAnswer'))) ||
+      cleanAnswerText(extractLabelText(questionEl, ['我的答案', '学生答案']))
     const analysis =
       textOf(questionEl.querySelector('.qtAnalysis')) ||
       textOf(questionEl.querySelector('.analysis')) ||
