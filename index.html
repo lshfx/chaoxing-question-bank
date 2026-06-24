@@ -314,6 +314,19 @@
       font-weight: 700;
     }
 
+    .fill-answers {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .fill-answer-row {
+      display: grid;
+      grid-template-columns: 64px minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+    }
+    .fill-answer-row span { color: #475569; }
+    .fill-answer-row input { width: 100%; }
     textarea {
       width: 100%;
       min-height: 116px;
@@ -904,6 +917,7 @@
 
           <h2 class="question" id="questionText"></h2>
           <div id="options" class="options"></div>
+          <div id="fillAnswers" class="fill-answers hidden"></div>
           <textarea id="textAnswer" class="hidden" placeholder="这里可以写下自己的答案，再点击显示答案进行核对。"></textarea>
 
           <div class="tools">
@@ -990,6 +1004,7 @@
       progressBadge: document.querySelector('#progressBadge'),
       questionText: document.querySelector('#questionText'),
       options: document.querySelector('#options'),
+      fillAnswers: document.querySelector('#fillAnswers'),
       textAnswer: document.querySelector('#textAnswer'),
       checkBtn: document.querySelector('#checkBtn'),
       showAnswerBtn: document.querySelector('#showAnswerBtn'),
@@ -1547,6 +1562,42 @@
       showQuestion(pool[index]);
     }
 
+    function splitNumberedAnswers(value) {
+      const text = String(value || '').replace(/（/g, '(').replace(/）/g, ')').trim();
+      const matches = Array.from(text.matchAll(/\((\d+)\)\s*/g));
+      if (matches.length < 2) return [];
+      return matches.map((match, index) => {
+        const start = match.index + match[0].length;
+        const end = matches[index + 1]?.index ?? text.length;
+        return normalizeText(text.slice(start, end).replace(/^[;；,，\s]+|[;；,，\s]+$/g, ''));
+      }).filter(Boolean);
+    }
+
+    function correctBlankAnswers(item) {
+      if (!/填空/.test(item?.type || '')) return [];
+      return splitNumberedAnswers(item.correctAnswer);
+    }
+
+    function serializeBlankInputs(root = els.fillAnswers) {
+      const values = Array.from(root.querySelectorAll('[data-blank-index]'))
+        .map((input) => normalizeText(input.value));
+      return values.map((value, index) => `(${index + 1}) ${value}`).join(';');
+    }
+
+    function populateBlankInputs(value, root = els.fillAnswers) {
+      const numbered = splitNumberedAnswers(value);
+      const fallback = String(value || '').split(/\r?\n|[;；]/).map(normalizeText).filter(Boolean);
+      const values = numbered.length ? numbered : fallback;
+      root.querySelectorAll('[data-blank-index]').forEach((input, index) => {
+        input.value = values[index] || '';
+      });
+    }
+
+    function currentTextAnswer() {
+      return els.fillAnswers.classList.contains('hidden')
+        ? normalizeText(els.textAnswer.value)
+        : serializeBlankInputs();
+    }
     function showQuestion(item) {
       state.current = item;
       const paper = currentPaper();
@@ -1566,7 +1617,10 @@
       els.answerBox.className = 'answer-box';
       els.answerBox.innerHTML = '';
       renderOptions(item);
-      if (saved?.text) els.textAnswer.value = saved.text;
+      if (saved?.text) {
+        els.textAnswer.value = saved.text;
+        populateBlankInputs(saved.text);
+      }
       updateOptionSelection();
       if (paper.submitted) {
         showAnswer();
@@ -1583,13 +1637,28 @@
 
     function renderOptions(item) {
       els.options.innerHTML = '';
+      els.fillAnswers.innerHTML = '';
       const isChoice = item.options.length > 0;
-      els.textAnswer.classList.toggle('hidden', isChoice);
+      const blankAnswers = correctBlankAnswers(item);
+      const isMultiBlank = !isChoice && blankAnswers.length > 1;
+      els.fillAnswers.classList.toggle('hidden', !isMultiBlank);
+      els.textAnswer.classList.toggle('hidden', isChoice || isMultiBlank);
       els.checkBtn.disabled = !canAutoCheck(item);
       els.checkBtn.textContent = canAutoCheck(item) ? '提交判断' : '主观题自评';
 
       if (!isChoice) {
         els.textAnswer.value = '';
+        if (isMultiBlank) {
+          els.fillAnswers.innerHTML = blankAnswers.map((_, index) => `
+            <label class="fill-answer-row">
+              <span>第${index + 1}空</span>
+              <input type="text" data-blank-index="${index}" autocomplete="off" placeholder="输入第${index + 1}空答案">
+            </label>
+          `).join('');
+          els.fillAnswers.querySelectorAll('input').forEach((input) => {
+            input.addEventListener('input', saveCurrentAnswer);
+          });
+        }
         return;
       }
 
@@ -1663,7 +1732,7 @@
     function selectedAnswer() {
       clampCurrentSelection();
       if (state.selected.size) return answerFromSelection(state.current, Array.from(state.selected));
-      return normalizeText(els.textAnswer.value);
+      return currentTextAnswer();
     }
 
     function answerFromSelection(item, selectedKeys) {
@@ -1705,7 +1774,7 @@
       const paper = currentPaper();
       paper.answers[state.current.id] = {
         selected: normalizedSelectedKeys(state.current, Array.from(state.selected)),
-        text: normalizeText(els.textAnswer.value),
+        text: currentTextAnswer(),
       };
     }
 
@@ -1763,9 +1832,10 @@
         let selected = Array.from(root.querySelectorAll('.paper-option.selected')).map((button) => button.dataset.key);
         selected = normalizedSelectedKeys(item, selected);
         const textarea = root.querySelector('textarea');
+        const hasBlankInputs = Boolean(root.querySelector('[data-blank-index]'));
         paper.answers[item.id] = {
           selected,
-          text: normalizeText(textarea?.value || ''),
+          text: hasBlankInputs ? serializeBlankInputs(root) : normalizeText(textarea?.value || ''),
         };
       });
     }
@@ -1813,6 +1883,21 @@
       bindPaperPreviewEvents();
     }
 
+    function renderPaperTextControl(item, value) {
+      const blanks = correctBlankAnswers(item);
+      if (blanks.length <= 1) {
+        return `<textarea placeholder="输入你的答案">${escapeHtml(value)}</textarea>`;
+      }
+      const numbered = splitNumberedAnswers(value);
+      const fallback = String(value || '').split(/\r?\n|[;；]/).map(normalizeText).filter(Boolean);
+      const values = numbered.length ? numbered : fallback;
+      return `<div class="fill-answers">${blanks.map((_, index) => `
+        <label class="fill-answer-row">
+          <span>第${index + 1}空</span>
+          <input type="text" data-blank-index="${index}" value="${escapeHtml(values[index] || '')}" autocomplete="off" placeholder="输入第${index + 1}空答案">
+        </label>
+      `).join('')}</div>`;
+    }
     function renderPaperQuestion(item, index) {
       const answer = answerFor(item);
       const result = currentPaper().results[item.id];
@@ -1833,7 +1918,7 @@
               <span>${escapeHtml(option.text)}</span>
             </button>
           `;
-          }).join('') : `<textarea placeholder="输入你的答案">${escapeHtml(answer.text)}</textarea>`}
+          }).join('') : renderPaperTextControl(item, answer.text)}
           ${resultText}
           ${answerBox}
         </div>
@@ -1868,8 +1953,8 @@
           els.paperPreview.querySelector(`#paper-q-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
       });
-      els.paperPreview.querySelectorAll('textarea').forEach((textarea) => {
-        textarea.addEventListener('input', () => {
+      els.paperPreview.querySelectorAll('textarea, [data-blank-index]').forEach((input) => {
+        input.addEventListener('input', () => {
           collectPaperAnswers();
           renderAnswerCardOnly();
         });
@@ -2147,15 +2232,36 @@
       return answer || '暂无';
     }
 
+    function splitUserBlankAnswers(value, expectedCount) {
+      const numbered = splitNumberedAnswers(value);
+      if (numbered.length) return numbered;
+      const values = String(value || '')
+        .split(/\r?\n|[;；]/)
+        .map(normalizeText)
+        .filter(Boolean);
+      return values.length === expectedCount ? values : [];
+    }
+
+    function isAnswerCorrect(item, userRaw) {
+      const correctBlanks = correctBlankAnswers(item);
+      if (correctBlanks.length > 1) {
+        const userBlanks = splitUserBlankAnswers(userRaw, correctBlanks.length);
+        if (userBlanks.length !== correctBlanks.length) return false;
+        return correctBlanks.every((correct, index) => {
+          const user = normalizeAnswer(userBlanks[index]);
+          return Boolean(user) && getAcceptedAnswers(correct, item).includes(user);
+        });
+      }
+      const user = normalizeAnswer(userRaw);
+      return Boolean(user) && getAcceptedAnswers(item.correctAnswer, item).includes(user);
+    }
     function gradeQuestion(item) {
       const paper = currentPaper();
       const answer = paper.answers[item.id] || { selected: [], text: '' };
       const userRaw = answer.selected.length ? answerFromSelection(item, answer.selected) : answer.text;
-      const user = normalizeAnswer(userRaw);
       const fullScore = questionScore(item);
       const subjective = /简答|问答|论述/.test(item.type);
-      const accepted = getAcceptedAnswers(item.correctAnswer, item);
-      const ok = Boolean(user) && accepted.includes(user);
+      const ok = isAnswerCorrect(item, userRaw);
       return {
         id: item.id,
         userAnswer: userRaw,
@@ -2254,9 +2360,8 @@
       clampCurrentSelection();
       saveCurrentAnswer();
       showAnswer();
-      const user = normalizeAnswer(selectedAnswer());
-      const accepted = getAcceptedAnswers(item.correctAnswer, item);
-      const ok = Boolean(user) && accepted.includes(user);
+      const userAnswer = selectedAnswer();
+      const ok = isAnswerCorrect(item, userAnswer);
       if (state.exam.active) {
         els.result.textContent = ok ? '当前题回答正确，提交模拟卷时会计分。' : `当前题回答错误，你的答案：${selectedAnswer() || '未作答'}`;
         els.result.className = `result ${ok ? 'ok' : 'bad'}`;
