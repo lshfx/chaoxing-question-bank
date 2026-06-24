@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         超星可见题目本地题库助手
 // @namespace    local.chaoxing.visible-question-bank
-// @version      0.1.8
+// @version      0.1.9
 // @description  采集当前超星页面中已经可见的题目、答案和解析，保存为本地复习题库，支持导出 JSON/Markdown/CSV。
 // @author       Codex
 // @match        *://*.chaoxing.com/exam-ans/exam/test/*
@@ -203,8 +203,14 @@
     const meta = parseMeta(questionEl)
     const qtContent = questionEl.querySelector('.qtContent')
     const options = parseOptions(questionEl)
+    const structuredStudentAnswer = extractLegacyStudentAnswer(questionEl)
+    const structuredCorrectAnswer = extractLegacyCorrectAnswer(questionEl)
     const studentAnswers = visibleTextList(questionEl, '.stuAnswerContent')
+      .map(cleanAnswerText)
+      .filter(Boolean)
     const rightAnswers = visibleTextList(questionEl, '.rightAnswerContent')
+      .map(cleanAnswerText)
+      .filter(Boolean)
     const analysis = visibleTextList(questionEl, '.qtAnalysis').join('\n')
     const questionText = normalizeMultiline(
       qtContent?.innerText || qtContent?.textContent || '',
@@ -229,8 +235,8 @@
       question: questionText,
       questionHtml: htmlOf(qtContent),
       options: isJudgeType(meta.type) && !options.length ? judgeOptions() : options,
-      myAnswer: studentAnswers.join('; '),
-      correctAnswer: rightAnswers.join('; '),
+      myAnswer: structuredStudentAnswer || studentAnswers.join('; '),
+      correctAnswer: structuredCorrectAnswer || rightAnswers.join('; '),
       analysis: normalizeMultiline(analysis),
       imageUrls: getImageUrls(questionEl),
       pageUrl: location.href,
