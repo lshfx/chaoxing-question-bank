@@ -1581,6 +1581,7 @@
     function serializeBlankInputs(root = els.fillAnswers) {
       const values = Array.from(root.querySelectorAll('[data-blank-index]'))
         .map((input) => normalizeText(input.value));
+      if (!values.some(Boolean)) return '';
       return values.map((value, index) => `(${index + 1}) ${value}`).join(';');
     }
 
@@ -1819,7 +1820,15 @@
 
     function isAnswered(item) {
       const answer = answerFor(item);
-      return Boolean(answer.text || answer.selected.length);
+      if (answer.selected.length) return true;
+      const blanks = correctBlankAnswers(item);
+      if (blanks.length > 1) {
+        const actualText = normalizeText(answer.text)
+          .replace(/\(\d+\)/g, '')
+          .replace(/[;；,，\s]/g, '');
+        return Boolean(actualText);
+      }
+      return Boolean(normalizeText(answer.text));
     }
 
     function collectPaperAnswers() {
