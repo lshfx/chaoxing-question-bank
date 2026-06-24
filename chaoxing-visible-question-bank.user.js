@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         超星可见题目本地题库助手
 // @namespace    local.chaoxing.visible-question-bank
-// @version      0.1.6
+// @version      0.1.7
 // @description  采集当前超星页面中已经可见的题目、答案和解析，保存为本地复习题库，支持导出 JSON/Markdown/CSV。
 // @author       Codex
 // @match        *://*.chaoxing.com/exam-ans/exam/test/*
@@ -22,6 +22,7 @@
 
   const STORE_KEY = 'cx_visible_question_bank_v1'
   const TARGET_LIBRARY_KEY = 'cx_visible_question_target_library_v1'
+  const PANEL_POSITION_KEY = 'cx_visible_question_panel_position_v1'
   const PANEL_ID = 'cx-qb-panel'
   // 发布到网上后，把这里改成你的练习网站地址，例如：
   // https://your-name.github.io/chaoxing-question-bank/question-bank-practice.html
@@ -652,6 +653,9 @@
         gap: 8px;
         margin-bottom: 8px;
         font-weight: 700;
+        cursor: move;
+        user-select: none;
+        touch-action: none;
       }
       #${PANEL_ID} .cx-qb-min-btn {
         width: 24px;
@@ -727,6 +731,74 @@
     document.head.appendChild(style)
   }
 
+  function clampPanelPosition(panel, left, top) {
+    const margin = 8
+    const maxLeft = Math.max(margin, window.innerWidth - panel.offsetWidth - margin)
+    const maxTop = Math.max(margin, window.innerHeight - panel.offsetHeight - margin)
+    return {
+      left: Math.min(Math.max(margin, left), maxLeft),
+      top: Math.min(Math.max(margin, top), maxTop),
+    }
+  }
+
+  function applyPanelPosition(panel, position) {
+    if (!position || !Number.isFinite(position.left) || !Number.isFinite(position.top)) return
+    const next = clampPanelPosition(panel, position.left, position.top)
+    panel.style.left = `${next.left}px`
+    panel.style.top = `${next.top}px`
+    panel.style.right = 'auto'
+    panel.style.bottom = 'auto'
+  }
+
+  function loadPanelPosition(panel) {
+    try {
+      applyPanelPosition(panel, JSON.parse(localStorage.getItem(PANEL_POSITION_KEY) || 'null'))
+    } catch {
+      localStorage.removeItem(PANEL_POSITION_KEY)
+    }
+  }
+
+  function makePanelDraggable(panel) {
+    const handle = panel.querySelector('.cx-qb-head')
+    let drag = null
+
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.target.closest('button, input, select, textarea, a')) return
+      const rect = panel.getBoundingClientRect()
+      drag = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+      }
+      handle.setPointerCapture(event.pointerId)
+      event.preventDefault()
+    })
+
+    handle.addEventListener('pointermove', (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return
+      applyPanelPosition(panel, {
+        left: event.clientX - drag.offsetX,
+        top: event.clientY - drag.offsetY,
+      })
+    })
+
+    const finishDrag = (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return
+      const rect = panel.getBoundingClientRect()
+      localStorage.setItem(PANEL_POSITION_KEY, JSON.stringify({
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+      }))
+      drag = null
+    }
+
+    handle.addEventListener('pointerup', finishDrag)
+    handle.addEventListener('pointercancel', finishDrag)
+    window.addEventListener('resize', () => {
+      const rect = panel.getBoundingClientRect()
+      applyPanelPosition(panel, { left: rect.left, top: rect.top })
+    })
+  }
   function createPanel() {
     if (document.getElementById(PANEL_ID)) return
     injectStyle()
@@ -759,6 +831,8 @@
       </div>
     `
     document.body.appendChild(panel)
+    loadPanelPosition(panel)
+    makePanelDraggable(panel)
     const libraryInput = panel.querySelector('.cx-qb-library-input')
     libraryInput.value = localStorage.getItem(TARGET_LIBRARY_KEY) || getPaperTitle()
     libraryInput.addEventListener('change', () => {
